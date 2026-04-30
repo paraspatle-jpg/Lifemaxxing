@@ -16,8 +16,8 @@ services:
     ports:
       - "8000:8000"
     environment:
-      MONGODB_URL: mongodb+srv://paras18224827_db_user:Ln2mElK30qVR08po@lifemaxxing-prod.hkstvfb.mongodb.net
-      MONGODB_DB: lifemaxxing-prod
+      MONGODB_URL: hehe
+      MONGODB_DB: hehe
       SECRET_KEY: change-me-in-production
     depends_on:
       db:
