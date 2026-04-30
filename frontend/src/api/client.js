@@ -1,12 +1,8 @@
 import axios from "axios";
-import { Capacitor } from "@capacitor/core";
 
-// Relative /api works in the browser (Vite proxy handles it).
-// In a native Capacitor WebView there is no proxy — use the absolute backend URL.
-const isNative = Capacitor.isNativePlatform();
-const baseURL = isNative
-  ? (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000")
-  : "/api";
+// VITE_API_URL is baked in at build time (set via Coolify build arg / .env.production).
+// Falls back to "/api" so the local Vite dev proxy keeps working.
+const baseURL = import.meta.env.VITE_API_URL || "/api";
 
 const api = axios.create({ baseURL });
 
