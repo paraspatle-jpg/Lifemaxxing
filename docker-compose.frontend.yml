@@ -1,0 +1,10 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_API_URL: ${VITE_API_URL}
+    ports:
+      - "8091:80"
+    restart: unless-stopped
