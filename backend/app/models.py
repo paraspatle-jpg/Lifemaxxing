@@ -1,88 +1,60 @@
-from datetime import date, datetime
-from sqlalchemy import (
-    Boolean, Column, Date, DateTime, Enum, ForeignKey,
-    Integer, String, Text, func
-)
-from sqlalchemy.orm import relationship
-import enum
+"""
+MongoDB document helpers.
 
-from app.database import Base
+Collections:
+  users           — {email, username, hashed_password, created_at, is_active}
+  tasks           — {user_id, name, description, attribute, xp_reward, is_active, is_default, created_at}
+  task_logs       — {user_id, task_id, task_name, attribute, logged_date, xp_earned, note, created_at}
+  user_attributes — {user_id, attribute, total_xp}
+  streaks         — {user_id, current_streak, longest_streak, last_logged_date}
 
+All _id fields are MongoDB ObjectId. user_id / task_id cross-references are stored
+as plain strings (str(ObjectId)) for simple equality filtering.
+"""
 
-class AttributeType(str, enum.Enum):
-    creativity = "creativity"
-    physicality = "physicality"
-    mentality = "mentality"
-    social = "social"
-
-
-class User(Base):
-    __tablename__ = "users"
-
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, index=True, nullable=False)
-    username = Column(String, unique=True, index=True, nullable=False)
-    hashed_password = Column(String, nullable=False)
-    created_at = Column(DateTime, server_default=func.now())
-    is_active = Column(Boolean, default=True)
-
-    tasks = relationship("Task", back_populates="owner")
-    task_logs = relationship("TaskLog", back_populates="user")
-    attributes = relationship("UserAttribute", back_populates="user")
-    streaks = relationship("Streak", back_populates="user")
+from datetime import datetime, date
+from bson import ObjectId
 
 
-class Task(Base):
-    __tablename__ = "tasks"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    name = Column(String, nullable=False)
-    description = Column(Text, nullable=True)
-    attribute = Column(Enum(AttributeType), nullable=False)
-    xp_reward = Column(Integer, nullable=False, default=10)
-    is_active = Column(Boolean, default=True)
-    is_default = Column(Boolean, default=False)
-    created_at = Column(DateTime, server_default=func.now())
-
-    owner = relationship("User", back_populates="tasks")
-    logs = relationship("TaskLog", back_populates="task")
+ATTRIBUTES = ["creativity", "physicality", "mentality", "social"]
 
 
-class TaskLog(Base):
-    __tablename__ = "task_logs"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False)
-    logged_date = Column(Date, nullable=False, default=date.today)
-    xp_earned = Column(Integer, nullable=False)
-    note = Column(Text, nullable=True)
-    created_at = Column(DateTime, server_default=func.now())
-
-    user = relationship("User", back_populates="task_logs")
-    task = relationship("Task", back_populates="logs")
+def new_id() -> str:
+    return str(ObjectId())
 
 
-class UserAttribute(Base):
-    __tablename__ = "user_attributes"
+def serialize(doc: dict) -> dict:
+    """Convert a raw MongoDB document to a JSON-serialisable dict."""
+    if doc is None:
+        return None
+    out = {}
+    for k, v in doc.items():
+        if k == "_id":
+            out["id"] = str(v)
+        elif isinstance(v, ObjectId):
+            out[k] = str(v)
+        elif isinstance(v, datetime):
+            out[k] = v.isoformat()
+        elif isinstance(v, date):
+            out[k] = v.isoformat()
+        else:
+            out[k] = v
+    return out
 
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    attribute = Column(Enum(AttributeType), nullable=False)
-    total_xp = Column(Integer, default=0)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
-    user = relationship("User", back_populates="attributes")
-
-
-class Streak(Base):
-    __tablename__ = "streaks"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    current_streak = Column(Integer, default=0)
-    longest_streak = Column(Integer, default=0)
-    last_logged_date = Column(Date, nullable=True)
-
-    user = relationship("User", back_populates="streaks")
+DEFAULT_TASKS = [
+    {"name": "Gym session",       "attribute": "physicality", "xp_reward": 10},
+    {"name": "Drink 3L water",    "attribute": "physicality", "xp_reward": 5},
+    {"name": "Hit protein goal",  "attribute": "physicality", "xp_reward": 10},
+    {"name": "Morning run",       "attribute": "physicality", "xp_reward": 10},
+    {"name": "Guitar practice",   "attribute": "creativity",  "xp_reward": 10},
+    {"name": "Explore new tech",  "attribute": "creativity",  "xp_reward": 15},
+    {"name": "Draw or sketch",    "attribute": "creativity",  "xp_reward": 10},
+    {"name": "Reading (30+ min)", "attribute": "mentality",   "xp_reward": 10},
+    {"name": "Journaling",        "attribute": "mentality",   "xp_reward": 5},
+    {"name": "Meditate",          "attribute": "mentality",   "xp_reward": 10},
+    {"name": "Study / deep work", "attribute": "mentality",   "xp_reward": 15},
+    {"name": "Talk to a stranger","attribute": "social",      "xp_reward": 15},
+    {"name": "Call a friend",     "attribute": "social",      "xp_reward": 10},
+    {"name": "Attend social event","attribute": "social",     "xp_reward": 20},
+]

@@ -1,10 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.database import Base, engine
+from app.database import init_db
 from app.routers import auth, dashboard, leaderboard, logs, tasks
-
-Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="LifeMaxxing API",
@@ -14,7 +12,13 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "capacitor://localhost",
+        "http://localhost",
+        "ionic://localhost",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -25,6 +29,11 @@ app.include_router(tasks.router)
 app.include_router(logs.router)
 app.include_router(dashboard.router)
 app.include_router(leaderboard.router)
+
+
+@app.on_event("startup")
+def startup():
+    init_db()
 
 
 @app.get("/health")

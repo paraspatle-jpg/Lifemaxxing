@@ -1,140 +1,133 @@
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
+from pymongo.database import Database
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.models import Streak, TaskLog, User, UserAttribute
-from app.schemas import AttributeProgress, DashboardOut, TaskLogOut, WeeklySummary
+from app.models import ATTRIBUTES, serialize
+from app.schemas import AttributeProgress, DashboardOut, TaskLogOut, UserOut
 from app.utils.xp import xp_progress
-from app.routers.logs import _to_log_out
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
+def _log_out(doc: dict) -> TaskLogOut:
+    s = serialize(doc)
+    if isinstance(s.get("logged_date"), str):
+        from datetime import date as d_
+        s["logged_date"] = d_.fromisoformat(s["logged_date"])
+    return TaskLogOut(**s)
+
+
 @router.get("", response_model=DashboardOut)
 def get_dashboard(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    db: Database = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
-    attributes = db.query(UserAttribute).filter(UserAttribute.user_id == current_user.id).all()
-    attr_progress = []
-    for a in attributes:
-        p = xp_progress(a.total_xp)
-        attr_progress.append(AttributeProgress(attribute=a.attribute, **p))
+    user_id = current_user["id"]
 
-    streak = db.query(Streak).filter(Streak.user_id == current_user.id).first()
-    today = date.today()
-    today_logs = (
-        db.query(TaskLog)
-        .filter(TaskLog.user_id == current_user.id, TaskLog.logged_date == today)
-        .order_by(TaskLog.created_at.desc())
-        .all()
-    )
+    attrs = list(db.user_attributes.find({"user_id": user_id}))
+    attr_progress = []
+    for a in ATTRIBUTES:
+        doc = next((x for x in attrs if x["attribute"] == a), {"total_xp": 0})
+        p = xp_progress(doc.get("total_xp", 0))
+        attr_progress.append(AttributeProgress(attribute=a, **p))
+
+    streak = db.streaks.find_one({"user_id": user_id}) or {}
+    today = date.today().isoformat()
+    today_logs = list(db.task_logs.find({"user_id": user_id, "logged_date": today}).sort("created_at", -1))
 
     return DashboardOut(
-        user=current_user,
+        user=UserOut(**{k: current_user[k] for k in ("id", "email", "username", "created_at")}),
         attributes=attr_progress,
-        current_streak=streak.current_streak if streak else 0,
-        longest_streak=streak.longest_streak if streak else 0,
-        today_logs=[_to_log_out(l) for l in today_logs],
-        today_xp=sum(l.xp_earned for l in today_logs),
+        current_streak=streak.get("current_streak", 0),
+        longest_streak=streak.get("longest_streak", 0),
+        today_logs=[_log_out(l) for l in today_logs],
+        today_xp=sum(l["xp_earned"] for l in today_logs),
     )
 
 
-@router.get("/weekly", response_model=WeeklySummary)
-def get_weekly_summary(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+@router.get("/weekly")
+def get_weekly(
+    db: Database = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
+    user_id = current_user["id"]
     today = date.today()
-    week_start = today - timedelta(days=today.weekday())
-    logs = (
-        db.query(TaskLog)
-        .filter(TaskLog.user_id == current_user.id, TaskLog.logged_date >= week_start)
-        .order_by(TaskLog.logged_date.desc())
-        .all()
-    )
+    week_start = (today - timedelta(days=today.weekday())).isoformat()
 
+    logs = list(db.task_logs.find({"user_id": user_id, "logged_date": {"$gte": week_start}}).sort("logged_date", -1))
     xp_by_attr: dict[str, int] = {}
     for log in logs:
-        key = log.task.attribute.value
-        xp_by_attr[key] = xp_by_attr.get(key, 0) + log.xp_earned
+        key = log["attribute"]
+        xp_by_attr[key] = xp_by_attr.get(key, 0) + log["xp_earned"]
 
-    return WeeklySummary(
-        week_start=week_start,
-        total_xp=sum(l.xp_earned for l in logs),
-        xp_by_attribute=xp_by_attr,
-        tasks_completed=len(logs),
-        logs=[_to_log_out(l) for l in logs],
-    )
+    return {
+        "week_start": week_start,
+        "total_xp": sum(l["xp_earned"] for l in logs),
+        "xp_by_attribute": xp_by_attr,
+        "tasks_completed": len(logs),
+        "logs": [serialize(l) for l in logs],
+    }
 
 
 @router.get("/heatmap")
 def get_heatmap(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    db: Database = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
-    """Daily XP totals for the last 365 days, formatted for a contribution heatmap."""
-    from sqlalchemy import func
+    user_id = current_user["id"]
+    cutoff = (date.today() - timedelta(days=364)).isoformat()
 
-    cutoff = date.today() - timedelta(days=364)
-    rows = (
-        db.query(
-            TaskLog.logged_date,
-            func.sum(TaskLog.xp_earned).label("xp"),
-            func.count(TaskLog.id).label("count"),
-        )
-        .filter(TaskLog.user_id == current_user.id, TaskLog.logged_date >= cutoff)
-        .group_by(TaskLog.logged_date)
-        .all()
-    )
-    return [{"date": str(r.logged_date), "xp": r.xp, "count": r.count} for r in rows]
+    pipeline = [
+        {"$match": {"user_id": user_id, "logged_date": {"$gte": cutoff}}},
+        {"$group": {
+            "_id": "$logged_date",
+            "xp": {"$sum": "$xp_earned"},
+            "count": {"$sum": 1},
+        }},
+        {"$sort": {"_id": 1}},
+    ]
+    return [{"date": r["_id"], "xp": r["xp"], "count": r["count"]} for r in db.task_logs.aggregate(pipeline)]
 
 
 @router.get("/stats")
 def get_stats(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    db: Database = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
-    """Extended stats: all-time totals, monthly breakdown."""
-    from sqlalchemy import extract, func
+    user_id = current_user["id"]
+    attrs = list(db.user_attributes.find({"user_id": user_id}))
+    streak = db.streaks.find_one({"user_id": user_id}) or {}
 
-    monthly = (
-        db.query(
-            extract("year", TaskLog.logged_date).label("year"),
-            extract("month", TaskLog.logged_date).label("month"),
-            func.sum(TaskLog.xp_earned).label("total_xp"),
-            func.count(TaskLog.id).label("tasks_done"),
-        )
-        .filter(TaskLog.user_id == current_user.id)
-        .group_by("year", "month")
-        .order_by("year", "month")
-        .all()
-    )
+    # Monthly breakdown via aggregation
+    pipeline = [
+        {"$match": {"user_id": user_id}},
+        {"$group": {
+            "_id": {"year": {"$substr": ["$logged_date", 0, 4]}, "month": {"$substr": ["$logged_date", 5, 2]}},
+            "total_xp": {"$sum": "$xp_earned"},
+            "tasks_done": {"$sum": 1},
+        }},
+        {"$sort": {"_id.year": 1, "_id.month": 1}},
+    ]
+    monthly = [
+        {"year": int(r["_id"]["year"]), "month": int(r["_id"]["month"]), "total_xp": r["total_xp"], "tasks_done": r["tasks_done"]}
+        for r in db.task_logs.aggregate(pipeline)
+    ]
 
-    attributes = db.query(UserAttribute).filter(UserAttribute.user_id == current_user.id).all()
-    streak = db.query(Streak).filter(Streak.user_id == current_user.id).first()
+    attr_data = []
+    for a in ATTRIBUTES:
+        doc = next((x for x in attrs if x["attribute"] == a), {"total_xp": 0})
+        attr_data.append({"attribute": a, **xp_progress(doc.get("total_xp", 0))})
 
     return {
-        "total_xp": sum(a.total_xp for a in attributes),
-        "attributes": [
-            {**xp_progress(a.total_xp), "attribute": a.attribute}
-            for a in attributes
-        ],
+        "total_xp": sum(a.get("total_xp", 0) for a in attrs),
+        "attributes": attr_data,
         "streak": {
-            "current": streak.current_streak if streak else 0,
-            "longest": streak.longest_streak if streak else 0,
-            "last_logged": streak.last_logged_date if streak else None,
+            "current": streak.get("current_streak", 0),
+            "longest": streak.get("longest_streak", 0),
+            "last_logged": streak.get("last_logged_date"),
         },
-        "monthly": [
-            {
-                "year": int(m.year),
-                "month": int(m.month),
-                "total_xp": m.total_xp,
-                "tasks_done": m.tasks_done,
-            }
-            for m in monthly
-        ],
+        "monthly": monthly,
     }

@@ -1,0 +1,8 @@
+
+# Capacitor — generated web asset copies inside native projects
+ios/App/App/public/
+android/app/src/main/assets/public/
+
+# Local env overrides
+.env.local
+node_modules/

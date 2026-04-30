@@ -1,16 +1,12 @@
 services:
   db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: lifemaxxing
+    image: mongo:7
     ports:
-      - "5432:5432"
+      - "27017:27017"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - mongodata:/data/db
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -20,7 +16,8 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@db:5432/lifemaxxing
+      MONGODB_URL: mongodb+srv://paras18224827_db_user:Ln2mElK30qVR08po@lifemaxxing-prod.hkstvfb.mongodb.net
+      MONGODB_DB: lifemaxxing-prod
       SECRET_KEY: change-me-in-production
     depends_on:
       db:
@@ -43,4 +40,4 @@ services:
     command: npm run dev -- --host
 
 volumes:
-  pgdata:
+  mongodata:

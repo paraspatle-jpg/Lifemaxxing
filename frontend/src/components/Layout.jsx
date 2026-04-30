@@ -23,7 +23,7 @@ export default function Layout() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <header className="border-b border-gray-800 bg-gray-950/80 backdrop-blur sticky top-0 z-10">
+      <header className="border-b border-gray-800 bg-gray-950/80 backdrop-blur sticky top-0 z-10 pt-[env(safe-area-inset-top)]">
         <div className="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between">
           <motion.span
             className="font-black text-lg tracking-tight"
@@ -58,7 +58,7 @@ export default function Layout() {
         </AnimatePresence>
       </main>
 
-      <nav className="border-t border-gray-800 bg-gray-950/90 backdrop-blur sticky bottom-0 z-10">
+      <nav className="border-t border-gray-800 bg-gray-950/90 backdrop-blur sticky bottom-0 z-10 pb-[env(safe-area-inset-bottom)]">
         <div className="max-w-4xl mx-auto flex">
           {navItems.map(({ to, label, icon }) => (
             <NavLink
