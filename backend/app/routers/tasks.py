@@ -68,14 +68,14 @@ def update_task(
     doc = db.tasks.find_one({"_id": ObjectId(task_id), "user_id": current_user["id"]})
     if not doc:
         raise HTTPException(status_code=404, detail="Task not found")
-    if doc.get("is_default"):
-        raise HTTPException(status_code=403, detail="Default tasks cannot be edited")
+    updates = payload.model_dump(exclude_unset=True)
+    if doc.get("is_default") and any(k != "reminder" for k in updates):
+        raise HTTPException(status_code=403, detail="Only reminders can be edited on default tasks")
     if payload.xp_reward is not None:
         err = validate_task_xp(payload.xp_reward)
         if err:
             raise HTTPException(status_code=422, detail=err)
 
-    updates = payload.model_dump(exclude_unset=True)
     db.tasks.update_one({"_id": ObjectId(task_id)}, {"$set": updates})
     doc.update(updates)
     return _task_out(doc)

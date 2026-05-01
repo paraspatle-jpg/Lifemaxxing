@@ -4,6 +4,7 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import api from "../api/client";
 import clsx from "clsx";
+import { scheduleForTask, cancelForTask, ensurePermission } from "../lib/reminders";
 
 const ATTRS = ["physicality", "mentality", "creativity", "social"];
 const ATTR_CONFIG = {
@@ -45,22 +46,59 @@ function XpPicker({ value, onChange }) {
   );
 }
 
-function TaskForm({ initial, onSubmit, onCancel, isPending, error, submitLabel }) {
+function ReminderSection({ value, onChange, placeholder }) {
+  const r = value ?? { enabled: false, time: "09:00", repeat: "daily", message: "" };
+  const set = (patch) => onChange({ ...r, ...patch });
+  return (
+    <div className="rounded-xl border border-gray-800 p-3 space-y-3">
+      <label className="flex items-center justify-between cursor-pointer">
+        <span className="text-xs text-gray-400">🔔 Reminder</span>
+        <input type="checkbox" checked={!!r.enabled}
+          onChange={async (e) => {
+            const enabled = e.target.checked;
+            if (enabled) await ensurePermission();
+            set({ enabled, time: r.time ?? "09:00", repeat: r.repeat ?? "daily" });
+          }}
+          className="w-9 h-5 appearance-none bg-gray-700 rounded-full relative transition-colors checked:bg-white cursor-pointer
+            before:content-[''] before:absolute before:w-4 before:h-4 before:bg-gray-300 before:rounded-full before:top-0.5 before:left-0.5 before:transition-transform
+            checked:before:translate-x-4 checked:before:bg-gray-950" />
+      </label>
+      {r.enabled && (
+        <>
+          <div className="flex gap-2">
+            <input type="time" value={r.time ?? "09:00"} onChange={(e) => set({ time: e.target.value })}
+              className="flex-1 bg-gray-800 rounded-lg px-3 py-2 text-sm outline-none focus:ring-1 ring-gray-500" />
+            <select value={r.repeat ?? "daily"} onChange={(e) => set({ repeat: e.target.value })}
+              className="bg-gray-800 rounded-lg px-3 py-2 text-sm outline-none focus:ring-1 ring-gray-500">
+              <option value="daily">Daily</option>
+              <option value="none">Once</option>
+            </select>
+          </div>
+          <input value={r.message ?? ""} onChange={(e) => set({ message: e.target.value })}
+            placeholder={placeholder || "Custom message (optional)"}
+            className="w-full bg-gray-800 rounded-lg px-3 py-2 text-sm outline-none focus:ring-1 ring-gray-500" />
+        </>
+      )}
+    </div>
+  );
+}
+
+function TaskForm({ initial, onSubmit, onCancel, isPending, error, submitLabel, lockFields, reminderPlaceholder }) {
   const [form, setForm] = useState(initial);
   return (
     <form onSubmit={(e) => { e.preventDefault(); onSubmit(form); }} className="space-y-4">
-      <input required placeholder="Task name" value={form.name}
+      <input required placeholder="Task name" value={form.name} disabled={lockFields}
         onChange={(e) => setForm({ ...form, name: e.target.value })}
-        className="w-full bg-gray-800 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-1 ring-gray-500" />
-      <input placeholder="Description (optional)" value={form.description}
+        className="w-full bg-gray-800 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-1 ring-gray-500 disabled:opacity-60" />
+      <input placeholder="Description (optional)" value={form.description} disabled={lockFields}
         onChange={(e) => setForm({ ...form, description: e.target.value })}
-        className="w-full bg-gray-800 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-1 ring-gray-500" />
+        className="w-full bg-gray-800 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-1 ring-gray-500 disabled:opacity-60" />
       <div>
         <label className="text-xs text-gray-400 block mb-2">Attribute</label>
         <div className="grid grid-cols-2 gap-2">
           {ATTRS.map((a) => (
-            <button key={a} type="button" onClick={() => setForm({ ...form, attribute: a })}
-              className={clsx("flex items-center gap-2 px-3 py-2 rounded-xl border text-sm transition-all",
+            <button key={a} type="button" disabled={lockFields} onClick={() => setForm({ ...form, attribute: a })}
+              className={clsx("flex items-center gap-2 px-3 py-2 rounded-xl border text-sm transition-all disabled:opacity-60",
                 form.attribute === a ? "border-white bg-white/10 text-white" : "border-gray-700 text-gray-500 hover:border-gray-600")}>
               <span>{ATTR_CONFIG[a].emoji}</span>
               <span className="capitalize">{a}</span>
@@ -68,7 +106,9 @@ function TaskForm({ initial, onSubmit, onCancel, isPending, error, submitLabel }
           ))}
         </div>
       </div>
-      <XpPicker value={form.xp_reward} onChange={(v) => setForm({ ...form, xp_reward: v })} />
+      {!lockFields && <XpPicker value={form.xp_reward} onChange={(v) => setForm({ ...form, xp_reward: v })} />}
+      <ReminderSection value={form.reminder} onChange={(r) => setForm({ ...form, reminder: r })}
+        placeholder={reminderPlaceholder} />
       {error && <p className="text-red-400 text-sm">{error}</p>}
       <div className="flex gap-2">
         <button type="button" onClick={onCancel}
@@ -101,18 +141,24 @@ export default function Tasks() {
 
   const createMutation = useMutation({
     mutationFn: (data) => api.post("/tasks", data).then((r) => r.data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["tasks"] }); setShowCreate(false); setCreateError(""); },
+    onSuccess: (task) => {
+      scheduleForTask(task);
+      qc.invalidateQueries({ queryKey: ["tasks"] }); setShowCreate(false); setCreateError("");
+    },
     onError: (err) => setCreateError(err.response?.data?.detail ?? "Failed to create task"),
   });
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }) => api.patch(`/tasks/${id}`, data).then((r) => r.data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["tasks"] }); setEditingId(null); setEditError(""); },
+    onSuccess: (task) => {
+      scheduleForTask(task);
+      qc.invalidateQueries({ queryKey: ["tasks"] }); setEditingId(null); setEditError("");
+    },
     onError: (err) => setEditError(err.response?.data?.detail ?? "Failed to update task"),
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id) => api.delete(`/tasks/${id}`),
+    mutationFn: (id) => { cancelForTask(id); return api.delete(`/tasks/${id}`); },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["tasks"] }),
   });
 
@@ -138,7 +184,7 @@ export default function Tasks() {
             className="bg-gray-900 border border-gray-700 rounded-2xl p-5">
             <h2 className="font-semibold mb-4">Create Task</h2>
             <TaskForm
-              initial={{ name: "", description: "", attribute: "physicality", xp_reward: 10 }}
+              initial={{ name: "", description: "", attribute: "physicality", xp_reward: 10, reminder: { enabled: false, time: "09:00", repeat: "daily", message: "" } }}
               onSubmit={(form) => createMutation.mutate(form)}
               onCancel={() => { setShowCreate(false); setCreateError(""); }}
               isPending={createMutation.isPending}
@@ -178,19 +224,18 @@ export default function Tasks() {
                           +{task.xp_reward} XP
                         </span>
                       </div>
-                      {task.is_default ? (
-                        <span className="text-xs text-gray-700 shrink-0 ml-2">default</span>
-                      ) : (
-                        <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                          <button onClick={() => { setEditingId(task.id); setEditError(""); setShowCreate(false); }}
-                            className="p-2 text-gray-500 hover:text-white transition-colors rounded-lg hover:bg-gray-800"
-                            title="Edit">✏️</button>
+                      <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                        {task.reminder?.enabled && <span title="Reminder on" className="text-xs">🔔</span>}
+                        <button onClick={() => { setEditingId(task.id); setEditError(""); setShowCreate(false); }}
+                          className="p-2 text-gray-500 hover:text-white transition-colors rounded-lg hover:bg-gray-800"
+                          title={task.is_default ? "Edit reminder" : "Edit"}>✏️</button>
+                        {!task.is_default && (
                           <button onClick={() => deleteMutation.mutate(task.id)}
                             disabled={deleteMutation.isPending}
                             className="p-2 text-gray-500 hover:text-red-400 transition-colors rounded-lg hover:bg-gray-800"
                             title="Delete">🗑️</button>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
                   )}
 
@@ -199,10 +244,25 @@ export default function Tasks() {
                     {editingId === task.id && (
                       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                         className="p-4 border-t border-gray-800">
-                        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Edit Task</p>
+                        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
+                          {task.is_default ? "Edit Reminder" : "Edit Task"}
+                        </p>
                         <TaskForm
-                          initial={{ name: task.name, description: task.description ?? "", attribute: task.attribute, xp_reward: task.xp_reward }}
-                          onSubmit={(form) => updateMutation.mutate({ id: task.id, data: form })}
+                          initial={{
+                            name: task.name,
+                            description: task.description ?? "",
+                            attribute: task.attribute,
+                            xp_reward: task.xp_reward,
+                            reminder: task.reminder ?? { enabled: false, time: "09:00", repeat: "daily", message: "" },
+                          }}
+                          lockFields={task.is_default}
+                          reminderPlaceholder={task.reminder_message || `Reminder: ${task.name}`}
+                          onSubmit={(form) => {
+                            const payload = task.is_default
+                              ? { reminder: form.reminder }
+                              : form;
+                            updateMutation.mutate({ id: task.id, data: payload });
+                          }}
                           onCancel={() => { setEditingId(null); setEditError(""); }}
                           isPending={updateMutation.isPending}
                           error={editError}

@@ -1,6 +1,9 @@
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
+import { useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
+import api from "../api/client";
+import { reconcileAll } from "../lib/reminders";
 import clsx from "clsx";
 
 const navItems = [
@@ -20,6 +23,10 @@ export default function Layout() {
     logout();
     navigate("/login");
   }
+
+  useEffect(() => {
+    api.get("/tasks").then((r) => reconcileAll(r.data)).catch(() => {});
+  }, []);
 
   return (
     <div className="min-h-screen flex flex-col">

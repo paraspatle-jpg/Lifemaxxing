@@ -29,11 +29,19 @@ class Token(BaseModel):
 
 
 # Tasks
+class Reminder(BaseModel):
+    enabled: bool = False
+    time: Optional[str] = None       # "HH:MM", local time
+    repeat: str = "daily"            # "daily" | "none"
+    message: Optional[str] = None    # null → use reminder_message fallback
+
+
 class TaskCreate(BaseModel):
     name: str
     description: Optional[str] = None
     attribute: str
     xp_reward: int = 10
+    reminder: Optional[Reminder] = None
 
 
 class TaskUpdate(BaseModel):
@@ -42,6 +50,7 @@ class TaskUpdate(BaseModel):
     attribute: Optional[str] = None
     xp_reward: Optional[int] = None
     is_active: Optional[bool] = None
+    reminder: Optional[Reminder] = None
 
 
 class TaskOut(BaseModel):
@@ -52,6 +61,8 @@ class TaskOut(BaseModel):
     xp_reward: int
     is_active: bool
     is_default: bool
+    reminder: Optional[Reminder] = None
+    reminder_message: Optional[str] = None
 
 
 # Logs
