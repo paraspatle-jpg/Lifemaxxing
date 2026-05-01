@@ -35,7 +35,7 @@ function buildSchedule(reminder) {
   if (Number.isNaN(h) || Number.isNaN(m)) return null;
 
   if (reminder.repeat === "daily") {
-    return { on: { hour: h, minute: m }, allowWhileIdle: true };
+    return { on: { hour: h, minute: m }, repeats: true, allowWhileIdle: true };
   }
   // one-shot: next occurrence of HH:MM (today if still in the future, else tomorrow)
   const at = new Date();
@@ -50,7 +50,7 @@ export async function scheduleForTask(task) {
   const id = notifIdForTask(task.id);
   await LocalNotifications.cancel({ notifications: [{ id }] }).catch(() => {});
   if (!schedule) return;
-  await LocalNotifications.schedule({
+  const result = await LocalNotifications.schedule({
     notifications: [
       {
         id,
@@ -61,6 +61,7 @@ export async function scheduleForTask(task) {
       },
     ],
   });
+  console.log("[reminders] scheduled", task.name, schedule, result);
 }
 
 export async function cancelForTask(taskId) {

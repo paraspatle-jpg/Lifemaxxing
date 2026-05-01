@@ -26,3 +26,19 @@ def init_db():
     db.task_logs.create_index([("user_id", ASCENDING), ("logged_date", DESCENDING)])
     db.user_attributes.create_index([("user_id", ASCENDING), ("attribute", ASCENDING)])
     db.streaks.create_index("user_id", unique=True)
+
+    # Backfill reminder_message on existing default tasks (added after initial seed).
+    from app.models import DEFAULT_TASKS
+    for t in DEFAULT_TASKS:
+        msg = t.get("reminder_message")
+        if not msg:
+            continue
+        db.tasks.update_many(
+            {"is_default": True, "name": t["name"], "reminder_message": {"$in": [None, ""]}},
+            {"$set": {"reminder_message": msg}},
+        )
+        # Also catch docs where the field is entirely missing
+        db.tasks.update_many(
+            {"is_default": True, "name": t["name"], "reminder_message": {"$exists": False}},
+            {"$set": {"reminder_message": msg}},
+        )
